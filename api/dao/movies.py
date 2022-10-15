@@ -1,15 +1,21 @@
-from api.data import popular, goodfellas
+from typing import Optional
+
+from neo4j import Transaction, Driver
+from neo4j.graph import Node
+
+from api.data import goodfellas
 
 from api.exceptions.notfound import NotFoundException
 from api.data import popular
+
 
 class MovieDAO:
     """
     The constructor expects an instance of the Neo4j Driver, which will be
     used to interact with Neo4j.
     """
-    def __init__(self, driver):
-        self.driver = driver
+    def __init__(self, driver: Driver) -> None:
+        self.driver: Driver = driver
 
     """
      This method should return a paginated list of movies ordered by the `sort`
@@ -20,9 +26,43 @@ class MovieDAO:
      signify whether the user has added the movie to their "My Favorites" list.
     """
     # tag::all[]
-    def all(self, sort, order, limit=6, skip=0, user_id=None):
-        # TODO: Get list from movies from Neo4j
-        return popular
+    def all(
+            self,
+            sort: str,
+            order: str,
+            limit: int = 6,
+            skip: int = 0,
+            user_id: Optional[str] = None,
+    ) -> list[Node]:
+        """
+        Retrieve all movies from a database subject to specified criteria.
+
+        :param sort: The node property by which we sort the movies in the
+            return value
+        :type sort: str
+        :param order: The order in which we sort the return values
+        :type order: str
+        :param limit: The maximum number of rows to return from the query
+        :type limit: int
+        :param skip: The index of the row to start including the rows in the
+            return value
+        :type skip: int
+        :param user_id: The ID of the user who is making the transaction,
+            defaults to None
+        :type user_id: Optional[str]
+        :return: A list of movie nodes that align with the query constructed
+            from the input specifications
+        :rtype: list[Node]
+        """
+        with self.driver.session() as session:
+            return session.execute_read(
+                transaction_function=self.get_movies,
+                sort=sort,
+                order=order,
+                limit=limit,
+                skip=skip,
+                user_id=user_id,
+            )
     # end::all[]
 
     """
@@ -104,6 +144,52 @@ class MovieDAO:
 
         return goodfellas
     # end::findById[]
+
+    @staticmethod
+    def get_movies(
+            tx: Transaction,
+            sort: str,
+            order: str,
+            limit: int,
+            skip: int,
+            user_id: Optional[str] = None,
+    ) -> list[Node]:
+        """
+        Construct a Cypher query to return a list of movies and execute it.
+
+        :param tx: A Neo4j transaction object
+        :type tx: Transaction
+        :param sort: The node property by which we sort the movies in the
+            return value
+        :type sort: str
+        :param order: The order in which we sort the return values
+        :type order: str
+        :param limit: The maximum number of rows to return from the query
+        :type limit: int
+        :param skip: The index of the row to start including the rows in the
+            return value
+        :type skip: int
+        :param user_id: The ID of the user who is making the transaction,
+            defaults to None
+        :type user_id: Optional[str]
+        :return: A list of movie nodes that align with the query constructed
+            from the input specifications
+        :rtype: list[Node]
+        """
+        cypher_query = "\n".join(
+            [
+                "MATCH (m:Movie)",
+                f"WHERE exists(m.`{sort}`)",
+                "RETURN m { .* } AS movie",
+                f"ORDER BY m.`{sort}` {order}",
+                "SKIP $skip",
+                "LIMIT $limit",
+            ]
+        )
+        result = tx.run(
+            query=cypher_query, limit=limit, skip=skip, user_id=user_id)
+
+        return [record.value("movie") for record in result]
 
     """
     This method should return a paginated list of similar movies to the Movie with the
